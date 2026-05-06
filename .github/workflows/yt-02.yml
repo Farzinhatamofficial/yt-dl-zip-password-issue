@@ -138,26 +138,27 @@ jobs:
           }
 
           # ============================================================
-          # FIXED FORMAT STRINGS – removed [ext=mp4] restrictions
+          # OPTIMIZED FORMAT STRINGS – support for 4K and high quality
           # ============================================================
           case "$QUALITY" in
             "audio")
-              FORMAT="bestaudio"
+              FORMAT="bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio"
               ;;
             "best")
-              FORMAT="bestvideo+bestaudio/best"
+              # Request best quality available (including 4K, 8K)
+              FORMAT="bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
               ;;
             "1080")
-              FORMAT="bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"
+              FORMAT="bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]"
               ;;
             "720")
-              FORMAT="bestvideo[height<=720]+bestaudio/best[height<=720]/best"
+              FORMAT="bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]"
               ;;
             "480")
-              FORMAT="bestvideo[height<=480]+bestaudio/best[height<=480]/best"
+              FORMAT="bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480]"
               ;;
             *)
-              FORMAT="bestvideo+bestaudio/best"
+              FORMAT="bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
               ;;
           esac
 
