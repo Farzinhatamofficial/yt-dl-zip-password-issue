@@ -7,16 +7,24 @@ on:
   workflow_dispatch:
     inputs:
       youtube_url:
-        description: 'YouTube video URL'
+        description: '🔗 YouTube video URL'
         required: true
         type: string
       quality:
-        description: 'Video quality (best, 2160, 1440, 1080, 720, 480, audio)'
+        description: '🎬 Video quality'
         required: false
         default: 'best'
-        type: string
+        type: choice
+        options:
+          - best
+          - 2160
+          - 1440
+          - 1080
+          - 720
+          - 480
+          - audio
       password:
-        description: 'Password for zip files (optional)'
+        description: '🔒 Password for zip files (optional)'
         required: false
         default: ''
         type: string
@@ -146,34 +154,39 @@ jobs:
 
           # ============================================================
           # OPTIMIZED FORMAT STRINGS – support for 4K and high quality
+          # FIXED: Now downloads exact quality, not "up to" quality
           # ============================================================
           case "$QUALITY" in
             "audio")
               FORMAT="bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio"
               ;;
             "best")
-              # Request best quality available (including 4K, 8K)
-              FORMAT="bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
+              # Request ABSOLUTE BEST quality available (4K, 8K)
+              # Quality comes first, container format is secondary
+              FORMAT="bestvideo+bestaudio/best"
               ;;
             "2160"|"4k")
-              # 4K / 2160p
-              FORMAT="bestvideo[height<=2160][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=2160]+bestaudio/best[height<=2160]"
+              # 4K / 2160p - try exact height first, then fallback to range
+              FORMAT="bestvideo[height=2160]+bestaudio/bestvideo[height>=2160]+bestaudio/bestvideo[height<=2160]+bestaudio/best"
               ;;
             "1440"|"2k")
-              # 2K / 1440p
-              FORMAT="bestvideo[height<=1440][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1440]+bestaudio/best[height<=1440]"
+              # 2K / 1440p - try exact height first, then fallback to range
+              FORMAT="bestvideo[height=1440]+bestaudio/bestvideo[height>=1440][height<=2160]+bestaudio/bestvideo[height<=1440]+bestaudio/best"
               ;;
             "1080")
-              FORMAT="bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]"
+              # 1080p - try exact height first, then fallback to range
+              FORMAT="bestvideo[height=1080]+bestaudio/bestvideo[height>=1080][height<=1440]+bestaudio/bestvideo[height<=1080]+bestaudio/best"
               ;;
             "720")
-              FORMAT="bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]"
+              # 720p - try exact height first, then fallback to range
+              FORMAT="bestvideo[height=720]+bestaudio/bestvideo[height>=720][height<=1080]+bestaudio/bestvideo[height<=720]+bestaudio/best"
               ;;
             "480")
-              FORMAT="bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480]"
+              # 480p - try exact height first, then fallback to range
+              FORMAT="bestvideo[height=480]+bestaudio/bestvideo[height>=480][height<=720]+bestaudio/bestvideo[height<=480]+bestaudio/best"
               ;;
             *)
-              FORMAT="bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
+              FORMAT="bestvideo+bestaudio/best"
               ;;
           esac
 
