@@ -380,28 +380,24 @@ jobs:
             FOLDER_ENCODED=$(urlencode "${FINAL_FOLDER_NAME}")
 
             if [ "$SIZE" -gt "$SPLIT_BYTES" ]; then
-              echo "Splitting $BASENAME into ${SPLIT_MB}MB parts..."
+              echo "Splitting $BASENAME into ${SPLIT_MB}MB parts using ZIP format..."
 
               ARCHIVE_BASE="$BACKUP_DIR/${FINAL_FOLDER_NAME}/${FINAL_FOLDER_NAME}"
 
               if [ -n "$ZIP_PASSWORD" ]; then
-                7z a \
-                  -v${SPLIT_MB}m \
-                  -p"${ZIP_PASSWORD}" \
-                  -mhe=on \
-                  -mx=0 \
-                  "${ARCHIVE_BASE}.7z" \
-                  "$FILE"
+                # ZIP with password and splitting
+                cd "$(dirname "$FILE")"
+                zip -s ${SPLIT_MB}m -P "${ZIP_PASSWORD}" -0 "${ARCHIVE_BASE}.zip" "$(basename "$FILE")"
+                cd - > /dev/null
               else
-                7z a \
-                  -v${SPLIT_MB}m \
-                  -mx=0 \
-                  "${ARCHIVE_BASE}.7z" \
-                  "$FILE"
+                # ZIP without password, with splitting
+                cd "$(dirname "$FILE")"
+                zip -s ${SPLIT_MB}m -0 "${ARCHIVE_BASE}.zip" "$(basename "$FILE")"
+                cd - > /dev/null
               fi
 
-              PART_COUNT=$(ls "$BACKUP_DIR/${FINAL_FOLDER_NAME}/"*.7z* 2>/dev/null | wc -l)
-              echo "Created $PART_COUNT parts"
+              PART_COUNT=$(ls "$BACKUP_DIR/${FINAL_FOLDER_NAME}/"*.z[0-9]* "$BACKUP_DIR/${FINAL_FOLDER_NAME}/"*.zip 2>/dev/null | wc -l)
+              echo "Created $PART_COUNT parts (ZIP format)"
 
               TOTAL_SIZE=0
               for part_file in "$BACKUP_DIR/${FINAL_FOLDER_NAME}"/*; do
@@ -414,15 +410,14 @@ jobs:
 
               DOWNLOAD_LINKS_MD=""
               LINK_NUM=0
-              for part_file in $(ls "$BACKUP_DIR/${FINAL_FOLDER_NAME}/"*.7z* 2>/dev/null | sort); do
+              # List ZIP parts in correct order (.z01, .z02, ... .zip is last)
+              for part_file in $(ls "$BACKUP_DIR/${FINAL_FOLDER_NAME}/"*.z[0-9]* "$BACKUP_DIR/${FINAL_FOLDER_NAME}/"*.zip 2>/dev/null | sort -V); do
                 if [ -f "$part_file" ]; then
                   PART_BASENAME=$(basename "$part_file")
                   PART_ENCODED=$(urlencode "${PART_BASENAME}")
                   RAW_LINK="https://github.com/${REPO_OWNER}/${REPO_NAME}/raw/${BRANCH}/videos/${FOLDER_ENCODED}/${PART_ENCODED}"
                   LINK_NUM=$((LINK_NUM + 1))
-                  DOWNLOAD_LINKS_MD="${DOWNLOAD_LINKS_MD}| ${LINK_NUM} | \`${PART_BASENAME}\` | [Download](${RAW_LINK}) |"$'\n'
-                fi
-              done
+                  DOWNLOAD_LINKS_MD="${DOWNLOAD_LINKS_MD}| ${LINK_NUM} | \`${PART_BASENAME}\` | [Download](${RAW_LINK}) |"
 
               README_FILE="$BACKUP_DIR/${FINAL_FOLDER_NAME}/README.md"
               {
@@ -455,15 +450,84 @@ jobs:
                 printf '%s\n' ""
                 printf '%s\n' "---"
                 printf '%s\n' ""
-                printf '%s\n' "## How to Extract"
+                printf '%s\n' "## 📦 How to Extract (Multi-Part ZIP)"
                 printf '%s\n' ""
-                printf '%s\n' "1. **Download** all parts (e.g. \`.7z.001\`, \`.7z.002\`...)"
-                printf '%s\n' "2. **Install** [7-Zip](https://www.7-zip.org/) (Windows/Linux) or [Keka](https://www.keka.io/) (Mac)"
-                printf '%s\n' "3. **Right-click** the \`.7z.001\` file → Extract Here"
-                printf '%s\n' "4. All parts combine automatically into the original video"
+                printf '%s\n' "### ⚠️ IMPORTANT: Download ALL parts to the same folder!"
+                printf '%s\n' ""
+                printf '%s\n' "### 🪟 **Windows**"
+                printf '%s\n' ""
+                printf '%s\n' "**Method 1: WinRAR (Recommended)**"
+                printf '%s\n' "1. Download all parts (\`.z01\`, \`.z02\`, ... \`.zip\`) to one folder"
+                printf '%s\n' "2. Right-click on \`${FINAL_FOLDER_NAME}.zip\` → Extract Here"
                 if [ -n "$ZIP_PASSWORD" ]; then
-                  printf '%s\n' "5. Enter the password when prompted"
+                  printf '%s\n' "3. Enter password when prompted"
                 fi
+                printf '%s\n' ""
+                printf '%s\n' "**Method 2: 7-Zip**"
+                printf '%s\n' "1. Download all parts to one folder"
+                printf '%s\n' "2. Right-click on \`${FINAL_FOLDER_NAME}.zip\` → 7-Zip → Extract Here"
+                if [ -n "$ZIP_PASSWORD" ]; then
+                  printf '%s\n' "3. Enter password when prompted"
+                fi
+                printf '%s\n' ""
+                printf '%s\n' "### 🍎 **macOS**"
+                printf '%s\n' ""
+                printf '%s\n' "**Using The Unarchiver (Recommended)**"
+                printf '%s\n' "1. Install The Unarchiver from App Store"
+                printf '%s\n' "2. Download all parts to one folder"
+                printf '%s\n' "3. Double-click \`${FINAL_FOLDER_NAME}.zip\`"
+                if [ -n "$ZIP_PASSWORD" ]; then
+                  printf '%s\n' "4. Enter password when prompted"
+                fi
+                printf '%s\n' ""
+                printf '%s\n' "**Using Terminal**"
+                printf '%s\n' "\`\`\`bash"
+                printf '%s\n' "cd ~/Downloads"
+                printf '%s\n' "7z x ${FINAL_FOLDER_NAME}.zip"
+                printf '%s\n' "\`\`\`"
+                printf '%s\n' ""
+                printf '%s\n' "### 🐧 **Linux**"
+                printf '%s\n' ""
+                printf '%s\n' "**Method 1: Using 7-Zip (Recommended)**"
+                printf '%s\n' "\`\`\`bash"
+                printf '%s\n' "# Install 7-Zip"
+                printf '%s\n' "sudo apt install p7zip-full   # Ubuntu/Debian"
+                printf '%s\n' "sudo dnf install p7zip        # Fedora"
+                printf '%s\n' "sudo pacman -S p7zip          # Arch"
+                printf '%s\n' ""
+                printf '%s\n' "# Extract"
+                printf '%s\n' "7z x ${FINAL_FOLDER_NAME}.zip"
+                printf '%s\n' "\`\`\`"
+                printf '%s\n' ""
+                printf '%s\n' "**Method 2: Using unzip**"
+                printf '%s\n' "\`\`\`bash"
+                printf '%s\n' "unzip ${FINAL_FOLDER_NAME}.zip"
+                printf '%s\n' "\`\`\`"
+                printf '%s\n' ""
+                printf '%s\n' "**Method 3: GUI (File Roller, Ark, etc.)**"
+                printf '%s\n' "- Right-click \`${FINAL_FOLDER_NAME}.zip\` → Extract Here"
+                printf '%s\n' ""
+                printf '%s\n' "### 📱 **Android**"
+                printf '%s\n' ""
+                printf '%s\n' "**Using RAR for Android (Recommended)**"
+                printf '%s\n' "1. Install RAR app from Play Store"
+                printf '%s\n' "2. Download all parts to one folder"
+                printf '%s\n' "3. Open RAR app → Navigate to download folder"
+                printf '%s\n' "4. Tap \`${FINAL_FOLDER_NAME}.zip\`"
+                printf '%s\n' "5. Tap Extract icon"
+                if [ -n "$ZIP_PASSWORD" ]; then
+                  printf '%s\n' "6. Enter password when prompted"
+                fi
+                printf '%s\n' ""
+                printf '%s\n' "**Using ZArchiver**"
+                printf '%s\n' "1. Install ZArchiver from Play Store"
+                printf '%s\n' "2. Download all parts to one folder"
+                printf '%s\n' "3. Open ZArchiver → Navigate to files"
+                printf '%s\n' "4. Tap \`${FINAL_FOLDER_NAME}.zip\` → Extract Here"
+                printf '%s\n' ""
+                printf '%s\n' "---"
+                printf '%s\n' ""
+                printf '%s\n' "💡 **Note:** All parts (\`.z01\`, \`.z02\`, etc.) must be in the same folder. Only extract the \`.zip\` file - it will automatically combine all parts!"
                 printf '%s\n' ""
                 printf '%s\n' "---"
                 printf '%s\n' ""
@@ -474,17 +538,14 @@ jobs:
 
             else
               if [ -n "$ZIP_PASSWORD" ]; then
-                echo "$BASENAME - creating password-protected 7z archive"
+                echo "$BASENAME - creating password-protected ZIP archive"
 
-                7z a \
-                  -p"${ZIP_PASSWORD}" \
-                  -mhe=on \
-                  -mx=0 \
-                  "$BACKUP_DIR/${FINAL_FOLDER_NAME}/${FINAL_FOLDER_NAME}.7z" \
-                  "$FILE"
+                cd "$(dirname "$FILE")"
+                zip -P "${ZIP_PASSWORD}" -0 "$BACKUP_DIR/${FINAL_FOLDER_NAME}/${FINAL_FOLDER_NAME}.zip" "$(basename "$FILE")"
+                cd - > /dev/null
 
                 SIZE_MB=$(echo "scale=2; $SIZE / 1024 / 1024" | bc)
-                FILE_ENCODED=$(urlencode "${FINAL_FOLDER_NAME}.7z")
+                FILE_ENCODED=$(urlencode "${FINAL_FOLDER_NAME}.zip")
                 RAW_LINK="https://github.com/${REPO_OWNER}/${REPO_NAME}/raw/${BRANCH}/videos/${FOLDER_ENCODED}/${FILE_ENCODED}"
 
                 README_FILE="$BACKUP_DIR/${FINAL_FOLDER_NAME}/README.md"
@@ -510,22 +571,66 @@ jobs:
                   printf '%s\n' ""
                   printf '%s\n' "| # | File | Link |"
                   printf '%s\n' "|---|------|------|"
-                  printf '%s\n' "| 1 | \`${FINAL_FOLDER_NAME}.7z\` | [Download](${RAW_LINK}) |"
+                  printf '%s\n' "| 1 | \`${FINAL_FOLDER_NAME}.zip\` | [Download](${RAW_LINK}) |"
                   printf '%s\n' ""
                   printf '%s\n' "---"
                   printf '%s\n' ""
-                  printf '%s\n' "## How to Extract"
+                  printf '%s\n' "## 📦 How to Extract (Password-Protected ZIP)"
                   printf '%s\n' ""
-                  printf '%s\n' "1. **Install** [7-Zip](https://www.7-zip.org/) (Windows/Linux) or [Keka](https://www.keka.io/) (Mac)"
-                  printf '%s\n' "2. **Right-click** the \`.7z\` file → Extract Here"
-                  printf '%s\n' "3. Enter the password when prompted"
+                  printf '%s\n' "### 🪟 **Windows**"
+                  printf '%s\n' ""
+                  printf '%s\n' "**Method 1: WinRAR**"
+                  printf '%s\n' "1. Right-click \`${FINAL_FOLDER_NAME}.zip\` → Extract Here"
+                  printf '%s\n' "2. Enter password when prompted"
+                  printf '%s\n' ""
+                  printf '%s\n' "**Method 2: 7-Zip**"
+                  printf '%s\n' "1. Right-click \`${FINAL_FOLDER_NAME}.zip\` → 7-Zip → Extract Here"
+                  printf '%s\n' "2. Enter password when prompted"
+                  printf '%s\n' ""
+                  printf '%s\n' "### 🍎 **macOS**"
+                  printf '%s\n' ""
+                  printf '%s\n' "**Using Terminal**"
+                  printf '%s\n' "\`\`\`bash"
+                  printf '%s\n' "cd ~/Downloads"
+                  printf '%s\n' "unzip ${FINAL_FOLDER_NAME}.zip"
+                  printf '%s\n' "# Enter password when prompted"
+                  printf '%s\n' "\`\`\`"
+                  printf '%s\n' ""
+                  printf '%s\n' "**Using The Unarchiver**"
+                  printf '%s\n' "1. Install The Unarchiver from App Store"
+                  printf '%s\n' "2. Double-click \`${FINAL_FOLDER_NAME}.zip\`"
+                  printf '%s\n' "3. Enter password when prompted"
+                  printf '%s\n' ""
+                  printf '%s\n' "### 🐧 **Linux**"
+                  printf '%s\n' ""
+                  printf '%s\n' "**Using Terminal**"
+                  printf '%s\n' "\`\`\`bash"
+                  printf '%s\n' "unzip ${FINAL_FOLDER_NAME}.zip"
+                  printf '%s\n' "# Enter password when prompted"
+                  printf '%s\n' "\`\`\`"
+                  printf '%s\n' ""
+                  printf '%s\n' "**Using GUI (File Roller, Ark)**"
+                  printf '%s\n' "1. Right-click \`${FINAL_FOLDER_NAME}.zip\` → Extract Here"
+                  printf '%s\n' "2. Enter password when prompted"
+                  printf '%s\n' ""
+                  printf '%s\n' "### 📱 **Android**"
+                  printf '%s\n' ""
+                  printf '%s\n' "**Using RAR for Android**"
+                  printf '%s\n' "1. Install RAR app from Play Store"
+                  printf '%s\n' "2. Open RAR → Navigate to \`${FINAL_FOLDER_NAME}.zip\`"
+                  printf '%s\n' "3. Tap Extract → Enter password"
+                  printf '%s\n' ""
+                  printf '%s\n' "**Using ZArchiver**"
+                  printf '%s\n' "1. Install ZArchiver from Play Store"
+                  printf '%s\n' "2. Tap \`${FINAL_FOLDER_NAME}.zip\` → Extract Here"
+                  printf '%s\n' "3. Enter password when prompted"
                   printf '%s\n' ""
                   printf '%s\n' "---"
                   printf '%s\n' ""
                   printf '%s\n' "*This tool created by [avasam.ir](https://avasam.ir)*"
                 } > "$README_FILE"
 
-                echo "Created password-protected 7z archive and README.md"
+                echo "Created password-protected ZIP archive and README.md"
 
               else
                 echo "$BASENAME - copying mp4 directly (no archive needed)"
@@ -563,7 +668,33 @@ jobs:
                   printf '%s\n' ""
                   printf '%s\n' "---"
                   printf '%s\n' ""
-                  printf '%s\n' "Ready to use - no extraction needed!"
+                  printf '%s\n' "## 🎥 How to Use"
+                  printf '%s\n' ""
+                  printf '%s\n' "✅ **Ready to use - no extraction needed!**"
+                  printf '%s\n' ""
+                  printf '%s\n' "Simply download the video file and play it with your favorite media player:"
+                  printf '%s\n' ""
+                  printf '%s\n' "### 🪟 **Windows**"
+                  printf '%s\n' "- **VLC Media Player** (recommended) - [Download](https://www.videolan.org/)"
+                  printf '%s\n' "- Windows Media Player (built-in)"
+                  printf '%s\n' "- MPC-HC, PotPlayer, KMPlayer"
+                  printf '%s\n' ""
+                  printf '%s\n' "### 🍎 **macOS**"
+                  printf '%s\n' "- **VLC Media Player** (recommended) - [Download](https://www.videolan.org/)"
+                  printf '%s\n' "- QuickTime Player (built-in)"
+                  printf '%s\n' "- IINA, Elmedia Player"
+                  printf '%s\n' ""
+                  printf '%s\n' "### 🐧 **Linux**"
+                  printf '%s\n' "- **VLC Media Player** (recommended)"
+                  printf '%s\n' "- MPV, GNOME Videos, Celluloid"
+                  printf '%s\n' ""
+                  printf '%s\n' "### 📱 **Android**"
+                  printf '%s\n' "- **VLC for Android** - [Play Store](https://play.google.com/store/apps/details?id=org.videolan.vlc)"
+                  printf '%s\n' "- MX Player, KM Player, mpv-android"
+                  printf '%s\n' ""
+                  printf '%s\n' "### 🍎 **iOS/iPadOS**"
+                  printf '%s\n' "- **VLC for iOS** - [App Store](https://apps.apple.com/app/vlc-for-mobile/id650377962)"
+                  printf '%s\n' "- nPlayer, Infuse, OPlayer"
                   printf '%s\n' ""
                   printf '%s\n' "---"
                   printf '%s\n' ""
@@ -822,7 +953,638 @@ jobs:
 
           while IFS= read -r -d '' FILE; do
             ALL_FILES+=("$FILE")
-          done < <(find videos -type f \( -name "*.7z" -o -name "*.7z.[0-9]*" -o -name "*.mp4" -o -name "*.mp3" -o -name "*.m4a" \) -print0 2>/dev/null | sort -z)
+          done < <(find videos -type f \( -name "*.zip" -o -name "*.z[0-9]*" -o -name "*.mp4" -o -name "*.mp3" -o -name "*.m4a" \) -print0 2>/dev/null | sort -z)
+
+          TOTAL_FILES=${#ALL_FILES[@]}
+          echo "Found $TOTAL_FILES files to push"
+          echo ""
+
+          if [ $TOTAL_FILES -eq 0 ]; then
+            echo "No files to push!"
+            exit 0
+          fi
+
+          TOTAL_SIZE=0
+          for F in "${ALL_FILES[@]}"; do
+            if [ -f "$F" ]; then
+              FSIZE=$(stat -c%s "$F" 2>/dev/null || echo 0)
+              TOTAL_SIZE=$((TOTAL_SIZE + FSIZE))
+            fi
+          done
+          TOTAL_SIZE_MB=$((TOTAL_SIZE / 1024 / 1024))
+          echo "Total size: ${TOTAL_SIZE_MB}MB"
+          echo ""
+
+          if [ $TOTAL_SIZE_MB -lt 100 ]; then
+            echo "Small upload - pushing all at once..."
+
+            git add -A videos/
+            regenerate_master_readme
+            git add videos/README.md
+
+            if ! git diff --cached --quiet; then
+              git commit -m "[AVASAM] YouTube download [skip ci]"
+
+              PUSH_RETRY=0
+              while [ $PUSH_RETRY -lt 10 ]; do
+                PUSH_RETRY=$((PUSH_RETRY + 1))
+                if timeout 300 git push origin HEAD:"$BRANCH"; then
+                  echo "Push successful!"
+                  break
+                else
+                  echo "Push failed, retry $PUSH_RETRY/10..."
+                  sleep $((3 + RANDOM % 7))
+                  git fetch origin "$BRANCH"
+                  git reset --hard origin/"$BRANCH"
+                  mkdir -p videos
+                  cp -r "$BACKUP_DIR"/* videos/
+                  git add -A videos/
+                  regenerate_master_readme
+                  git add videos/README.md
+                  if ! git diff --cached --quiet; then
+                    git commit -m "[AVASAM] YouTube download [skip ci]"
+                  fi
+                fi
+              done
+            fi
+
+          else
+            echo "Large upload (${TOTAL_SIZE_MB}MB) - using incremental batch push..."
+            echo ""
+
+            push_batch "${ALL_FILES[@]}"
+
+            echo ""
+            echo "Pushing master README..."
+            git fetch origin "$BRANCH" --quiet 2>/dev/null || true
+            git reset --hard origin/"$BRANCH" 2>/dev/null || true
+            mkdir -p videos
+            cp -r "$BACKUP_DIR"/* videos/ 2>/dev/null || true
+
+            regenerate_master_readme
+            git add videos/README.md
+
+            if ! git diff --cached --quiet 2>/dev/null; then
+              git commit -m "[AVASAM] Update video list [skip ci]" --quiet 2>/dev/null || true
+
+              PUSH_RETRY=0
+              while [ $PUSH_RETRY -lt 5 ]; do
+                PUSH_RETRY=$((PUSH_RETRY + 1))
+                if timeout 60 git push origin HEAD:"$BRANCH" 2>&1; then
+                  echo "Master README pushed!"
+                  break
+                else
+                  echo "README push failed, retry $PUSH_RETRY/5..."
+                  sleep 3
+                fi
+              done
+            fi
+          fi
+
+          echo ""
+          echo "=========================================="
+          echo "All files pushed successfully!"
+          echo "AVASAM (https://avasam.ir)"
+          echo "=========================================="
+\n'
+                fi
+              done
+
+              README_FILE="$BACKUP_DIR/${FINAL_FOLDER_NAME}/README.md"
+              {
+                printf '%s\n' "# ${FILENAME_NO_EXT}"
+                printf '%s\n' ""
+                printf '%s\n' "---"
+                printf '%s\n' ""
+                printf '%s\n' "## Video Information"
+                printf '%s\n' ""
+                printf '%s\n' "| Property | Value |"
+                printf '%s\n' "|----------|-------|"
+                printf '%s\n' "| **Video Name** | \`${FILENAME_NO_EXT}\` |"
+                printf '%s\n' "| **Original Link** | [YouTube Video](${URL}) |"
+                printf '%s\n' "| **Total Size** | **${PART_COUNT} parts** - **${TOTAL_SIZE_MB} MB** |"
+                printf '%s\n' "| **Quality** | **${QUALITY}** |"
+                printf '%s\n' "| **Status** | **Complete (100%)** |"
+                if [ -n "$ZIP_PASSWORD" ]; then
+                  printf '%s\n' "| **Password Protected** | **YES** |"
+                else
+                  printf '%s\n' "| **Password Protected** | **NO** |"
+                fi
+                printf '%s\n' ""
+                printf '%s\n' "---"
+                printf '%s\n' ""
+                printf '%s\n' "## Download Links"
+                printf '%s\n' ""
+                printf '%s\n' "| # | File | Link |"
+                printf '%s\n' "|---|------|------|"
+                printf '%s' "${DOWNLOAD_LINKS_MD}"
+                printf '%s\n' ""
+                printf '%s\n' "---"
+                printf '%s\n' ""
+                printf '%s\n' "## 📦 How to Extract (Multi-Part ZIP)"
+                printf '%s\n' ""
+                printf '%s\n' "### ⚠️ IMPORTANT: Download ALL parts to the same folder!"
+                printf '%s\n' ""
+                printf '%s\n' "### 🪟 **Windows**"
+                printf '%s\n' ""
+                printf '%s\n' "**Method 1: WinRAR (Recommended)**"
+                printf '%s\n' "1. Download all parts (\`.z01\`, \`.z02\`, ... \`.zip\`) to one folder"
+                printf '%s\n' "2. Right-click on \`${FINAL_FOLDER_NAME}.zip\` → Extract Here"
+                if [ -n "$ZIP_PASSWORD" ]; then
+                  printf '%s\n' "3. Enter password when prompted"
+                fi
+                printf '%s\n' ""
+                printf '%s\n' "**Method 2: 7-Zip**"
+                printf '%s\n' "1. Download all parts to one folder"
+                printf '%s\n' "2. Right-click on \`${FINAL_FOLDER_NAME}.zip\` → 7-Zip → Extract Here"
+                if [ -n "$ZIP_PASSWORD" ]; then
+                  printf '%s\n' "3. Enter password when prompted"
+                fi
+                printf '%s\n' ""
+                printf '%s\n' "### 🍎 **macOS**"
+                printf '%s\n' ""
+                printf '%s\n' "**Using The Unarchiver (Recommended)**"
+                printf '%s\n' "1. Install The Unarchiver from App Store"
+                printf '%s\n' "2. Download all parts to one folder"
+                printf '%s\n' "3. Double-click \`${FINAL_FOLDER_NAME}.zip\`"
+                if [ -n "$ZIP_PASSWORD" ]; then
+                  printf '%s\n' "4. Enter password when prompted"
+                fi
+                printf '%s\n' ""
+                printf '%s\n' "**Using Terminal**"
+                printf '%s\n' "\`\`\`bash"
+                printf '%s\n' "cd ~/Downloads"
+                printf '%s\n' "7z x ${FINAL_FOLDER_NAME}.zip"
+                printf '%s\n' "\`\`\`"
+                printf '%s\n' ""
+                printf '%s\n' "### 🐧 **Linux**"
+                printf '%s\n' ""
+                printf '%s\n' "**Method 1: Using 7-Zip (Recommended)**"
+                printf '%s\n' "\`\`\`bash"
+                printf '%s\n' "# Install 7-Zip"
+                printf '%s\n' "sudo apt install p7zip-full   # Ubuntu/Debian"
+                printf '%s\n' "sudo dnf install p7zip        # Fedora"
+                printf '%s\n' "sudo pacman -S p7zip          # Arch"
+                printf '%s\n' ""
+                printf '%s\n' "# Extract"
+                printf '%s\n' "7z x ${FINAL_FOLDER_NAME}.zip"
+                printf '%s\n' "\`\`\`"
+                printf '%s\n' ""
+                printf '%s\n' "**Method 2: Using unzip**"
+                printf '%s\n' "\`\`\`bash"
+                printf '%s\n' "unzip ${FINAL_FOLDER_NAME}.zip"
+                printf '%s\n' "\`\`\`"
+                printf '%s\n' ""
+                printf '%s\n' "**Method 3: GUI (File Roller, Ark, etc.)**"
+                printf '%s\n' "- Right-click \`${FINAL_FOLDER_NAME}.zip\` → Extract Here"
+                printf '%s\n' ""
+                printf '%s\n' "### 📱 **Android**"
+                printf '%s\n' ""
+                printf '%s\n' "**Using RAR for Android (Recommended)**"
+                printf '%s\n' "1. Install RAR app from Play Store"
+                printf '%s\n' "2. Download all parts to one folder"
+                printf '%s\n' "3. Open RAR app → Navigate to download folder"
+                printf '%s\n' "4. Tap \`${FINAL_FOLDER_NAME}.zip\`"
+                printf '%s\n' "5. Tap Extract icon"
+                if [ -n "$ZIP_PASSWORD" ]; then
+                  printf '%s\n' "6. Enter password when prompted"
+                fi
+                printf '%s\n' ""
+                printf '%s\n' "**Using ZArchiver**"
+                printf '%s\n' "1. Install ZArchiver from Play Store"
+                printf '%s\n' "2. Download all parts to one folder"
+                printf '%s\n' "3. Open ZArchiver → Navigate to files"
+                printf '%s\n' "4. Tap \`${FINAL_FOLDER_NAME}.zip\` → Extract Here"
+                printf '%s\n' ""
+                printf '%s\n' "---"
+                printf '%s\n' ""
+                printf '%s\n' "💡 **Note:** All parts (\`.z01\`, \`.z02\`, etc.) must be in the same folder. Only extract the \`.zip\` file - it will automatically combine all parts!"
+                printf '%s\n' ""
+                printf '%s\n' "---"
+                printf '%s\n' ""
+                printf '%s\n' "*This tool created by [avasam.ir](https://avasam.ir)*"
+              } > "$README_FILE"
+
+              echo "Created README.md"
+
+            else
+              if [ -n "$ZIP_PASSWORD" ]; then
+                echo "$BASENAME - creating password-protected ZIP archive"
+
+                cd "$(dirname "$FILE")"
+                zip -P "${ZIP_PASSWORD}" -0 "$BACKUP_DIR/${FINAL_FOLDER_NAME}/${FINAL_FOLDER_NAME}.zip" "$(basename "$FILE")"
+                cd - > /dev/null
+
+                SIZE_MB=$(echo "scale=2; $SIZE / 1024 / 1024" | bc)
+                FILE_ENCODED=$(urlencode "${FINAL_FOLDER_NAME}.zip")
+                RAW_LINK="https://github.com/${REPO_OWNER}/${REPO_NAME}/raw/${BRANCH}/videos/${FOLDER_ENCODED}/${FILE_ENCODED}"
+
+                README_FILE="$BACKUP_DIR/${FINAL_FOLDER_NAME}/README.md"
+                {
+                  printf '%s\n' "# ${FILENAME_NO_EXT}"
+                  printf '%s\n' ""
+                  printf '%s\n' "---"
+                  printf '%s\n' ""
+                  printf '%s\n' "## Video Information"
+                  printf '%s\n' ""
+                  printf '%s\n' "| Property | Value |"
+                  printf '%s\n' "|----------|-------|"
+                  printf '%s\n' "| **Video Name** | \`${FILENAME_NO_EXT}\` |"
+                  printf '%s\n' "| **Original Link** | [YouTube Video](${URL}) |"
+                  printf '%s\n' "| **Total Size** | **1 archive** - **${SIZE_MB} MB** |"
+                  printf '%s\n' "| **Quality** | **${QUALITY}** |"
+                  printf '%s\n' "| **Status** | **Complete (100%)** |"
+                  printf '%s\n' "| **Password Protected** | **YES** |"
+                  printf '%s\n' ""
+                  printf '%s\n' "---"
+                  printf '%s\n' ""
+                  printf '%s\n' "## Download Link"
+                  printf '%s\n' ""
+                  printf '%s\n' "| # | File | Link |"
+                  printf '%s\n' "|---|------|------|"
+                  printf '%s\n' "| 1 | \`${FINAL_FOLDER_NAME}.zip\` | [Download](${RAW_LINK}) |"
+                  printf '%s\n' ""
+                  printf '%s\n' "---"
+                  printf '%s\n' ""
+                  printf '%s\n' "## 📦 How to Extract (Password-Protected ZIP)"
+                  printf '%s\n' ""
+                  printf '%s\n' "### 🪟 **Windows**"
+                  printf '%s\n' ""
+                  printf '%s\n' "**Method 1: WinRAR**"
+                  printf '%s\n' "1. Right-click \`${FINAL_FOLDER_NAME}.zip\` → Extract Here"
+                  printf '%s\n' "2. Enter password when prompted"
+                  printf '%s\n' ""
+                  printf '%s\n' "**Method 2: 7-Zip**"
+                  printf '%s\n' "1. Right-click \`${FINAL_FOLDER_NAME}.zip\` → 7-Zip → Extract Here"
+                  printf '%s\n' "2. Enter password when prompted"
+                  printf '%s\n' ""
+                  printf '%s\n' "### 🍎 **macOS**"
+                  printf '%s\n' ""
+                  printf '%s\n' "**Using Terminal**"
+                  printf '%s\n' "\`\`\`bash"
+                  printf '%s\n' "cd ~/Downloads"
+                  printf '%s\n' "unzip ${FINAL_FOLDER_NAME}.zip"
+                  printf '%s\n' "# Enter password when prompted"
+                  printf '%s\n' "\`\`\`"
+                  printf '%s\n' ""
+                  printf '%s\n' "**Using The Unarchiver**"
+                  printf '%s\n' "1. Install The Unarchiver from App Store"
+                  printf '%s\n' "2. Double-click \`${FINAL_FOLDER_NAME}.zip\`"
+                  printf '%s\n' "3. Enter password when prompted"
+                  printf '%s\n' ""
+                  printf '%s\n' "### 🐧 **Linux**"
+                  printf '%s\n' ""
+                  printf '%s\n' "**Using Terminal**"
+                  printf '%s\n' "\`\`\`bash"
+                  printf '%s\n' "unzip ${FINAL_FOLDER_NAME}.zip"
+                  printf '%s\n' "# Enter password when prompted"
+                  printf '%s\n' "\`\`\`"
+                  printf '%s\n' ""
+                  printf '%s\n' "**Using GUI (File Roller, Ark)**"
+                  printf '%s\n' "1. Right-click \`${FINAL_FOLDER_NAME}.zip\` → Extract Here"
+                  printf '%s\n' "2. Enter password when prompted"
+                  printf '%s\n' ""
+                  printf '%s\n' "### 📱 **Android**"
+                  printf '%s\n' ""
+                  printf '%s\n' "**Using RAR for Android**"
+                  printf '%s\n' "1. Install RAR app from Play Store"
+                  printf '%s\n' "2. Open RAR → Navigate to \`${FINAL_FOLDER_NAME}.zip\`"
+                  printf '%s\n' "3. Tap Extract → Enter password"
+                  printf '%s\n' ""
+                  printf '%s\n' "**Using ZArchiver**"
+                  printf '%s\n' "1. Install ZArchiver from Play Store"
+                  printf '%s\n' "2. Tap \`${FINAL_FOLDER_NAME}.zip\` → Extract Here"
+                  printf '%s\n' "3. Enter password when prompted"
+                  printf '%s\n' ""
+                  printf '%s\n' "---"
+                  printf '%s\n' ""
+                  printf '%s\n' "*This tool created by [avasam.ir](https://avasam.ir)*"
+                } > "$README_FILE"
+
+                echo "Created password-protected ZIP archive and README.md"
+
+              else
+                echo "$BASENAME - copying mp4 directly (no archive needed)"
+
+                cp "$FILE" "$BACKUP_DIR/${FINAL_FOLDER_NAME}/${FINAL_FOLDER_NAME}.${EXT}"
+
+                SIZE_MB=$(echo "scale=2; $SIZE / 1024 / 1024" | bc)
+                FILE_ENCODED=$(urlencode "${FINAL_FOLDER_NAME}.${EXT}")
+                RAW_LINK="https://github.com/${REPO_OWNER}/${REPO_NAME}/raw/${BRANCH}/videos/${FOLDER_ENCODED}/${FILE_ENCODED}"
+
+                README_FILE="$BACKUP_DIR/${FINAL_FOLDER_NAME}/README.md"
+                {
+                  printf '%s\n' "# ${FILENAME_NO_EXT}"
+                  printf '%s\n' ""
+                  printf '%s\n' "---"
+                  printf '%s\n' ""
+                  printf '%s\n' "## Video Information"
+                  printf '%s\n' ""
+                  printf '%s\n' "| Property | Value |"
+                  printf '%s\n' "|----------|-------|"
+                  printf '%s\n' "| **Video Name** | \`${FILENAME_NO_EXT}\` |"
+                  printf '%s\n' "| **Original Link** | [YouTube Video](${URL}) |"
+                  printf '%s\n' "| **Total Size** | **1 file** (no split) - **${SIZE_MB} MB** |"
+                  printf '%s\n' "| **Quality** | **${QUALITY}** |"
+                  printf '%s\n' "| **Status** | **Complete (100%)** |"
+                  printf '%s\n' "| **Password Protected** | **NO** |"
+                  printf '%s\n' ""
+                  printf '%s\n' "---"
+                  printf '%s\n' ""
+                  printf '%s\n' "## Download Link"
+                  printf '%s\n' ""
+                  printf '%s\n' "| # | File | Link |"
+                  printf '%s\n' "|---|------|------|"
+                  printf '%s\n' "| 1 | \`${FINAL_FOLDER_NAME}.${EXT}\` | [Download](${RAW_LINK}) |"
+                  printf '%s\n' ""
+                  printf '%s\n' "---"
+                  printf '%s\n' ""
+                  printf '%s\n' "## 🎥 How to Use"
+                  printf '%s\n' ""
+                  printf '%s\n' "✅ **Ready to use - no extraction needed!**"
+                  printf '%s\n' ""
+                  printf '%s\n' "Simply download the video file and play it with your favorite media player:"
+                  printf '%s\n' ""
+                  printf '%s\n' "### 🪟 **Windows**"
+                  printf '%s\n' "- **VLC Media Player** (recommended) - [Download](https://www.videolan.org/)"
+                  printf '%s\n' "- Windows Media Player (built-in)"
+                  printf '%s\n' "- MPC-HC, PotPlayer, KMPlayer"
+                  printf '%s\n' ""
+                  printf '%s\n' "### 🍎 **macOS**"
+                  printf '%s\n' "- **VLC Media Player** (recommended) - [Download](https://www.videolan.org/)"
+                  printf '%s\n' "- QuickTime Player (built-in)"
+                  printf '%s\n' "- IINA, Elmedia Player"
+                  printf '%s\n' ""
+                  printf '%s\n' "### 🐧 **Linux**"
+                  printf '%s\n' "- **VLC Media Player** (recommended)"
+                  printf '%s\n' "- MPV, GNOME Videos, Celluloid"
+                  printf '%s\n' ""
+                  printf '%s\n' "### 📱 **Android**"
+                  printf '%s\n' "- **VLC for Android** - [Play Store](https://play.google.com/store/apps/details?id=org.videolan.vlc)"
+                  printf '%s\n' "- MX Player, KM Player, mpv-android"
+                  printf '%s\n' ""
+                  printf '%s\n' "### 🍎 **iOS/iPadOS**"
+                  printf '%s\n' "- **VLC for iOS** - [App Store](https://apps.apple.com/app/vlc-for-mobile/id650377962)"
+                  printf '%s\n' "- nPlayer, Infuse, OPlayer"
+                  printf '%s\n' ""
+                  printf '%s\n' "---"
+                  printf '%s\n' ""
+                  printf '%s\n' "*This tool created by [avasam.ir](https://avasam.ir)*"
+                } > "$README_FILE"
+
+                echo "Copied mp4 and created README.md"
+              fi
+            fi
+          done
+
+          rm -rf tmp_downloads
+
+          echo ""
+          echo "===== Backup folder contents ====="
+          find "$BACKUP_DIR" -type f | head -50
+          echo "===== Video info file ====="
+          cat /tmp/video_info.txt
+
+      - name: Stop WARP Container
+        if: always()
+        run: |
+          docker stop warp || true
+          docker rm warp || true
+
+      - name: Incremental Commit & Push
+        run: |
+          BRANCH="${GITHUB_REF_NAME}"
+          REPO_OWNER="${{ github.repository_owner }}"
+          REPO_NAME="${{ github.event.repository.name }}"
+
+          echo "AVASAM (https://avasam.ir) - Incremental Push Mode"
+          echo "This method pushes files ONE AT A TIME to avoid timeout issues"
+          echo ""
+
+          BACKUP_DIR=$(cat /tmp/backup_dir_path.txt)
+          echo "Backup directory: $BACKUP_DIR"
+
+          BACKUP_FILE_COUNT=$(find "$BACKUP_DIR" -type f 2>/dev/null | wc -l)
+          echo "Total files to push: $BACKUP_FILE_COUNT"
+
+          if [ "$BACKUP_FILE_COUNT" -eq 0 ]; then
+            echo "ERROR: No files in backup directory!"
+            exit 1
+          fi
+
+          urlencode() {
+            python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$1"
+          }
+
+          regenerate_master_readme() {
+            MASTER_README="videos/README.md"
+
+            echo "Regenerating master README..."
+
+            {
+              echo "# DOWNLOADED VIDEOS LIST :"
+              echo ""
+              echo "----"
+              echo ""
+            } > "$MASTER_README"
+
+            VIDEO_EMOJIS=("🎬" "🎥" "📽️" "🎞️" "📺" "🎦" "🎭" "🎪" "🎯" "🎮" "🎵" "🎶" "🎸" "🎹" "🎤")
+
+            NUM=0
+
+            for folder in videos/*/; do
+              [ -d "$folder" ] || continue
+              FOLDER_NAME=$(basename "$folder")
+              [ -f "$folder/README.md" ] || continue
+
+              NUM=$((NUM + 1))
+              RANDOM_EMOJI="${VIDEO_EMOJIS[$RANDOM % ${#VIDEO_EMOJIS[@]}]}"
+              FOLDER_ENCODED=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$FOLDER_NAME")
+              FOLDER_LINK="https://github.com/${REPO_OWNER}/${REPO_NAME}/tree/${BRANCH}/videos/${FOLDER_ENCODED}"
+
+              printf -- "- %s - %s [%s](%s)\n" "$NUM" "$RANDOM_EMOJI" "$FOLDER_NAME" "$FOLDER_LINK" >> "$MASTER_README"
+            done
+
+            echo "Master README regenerated with $NUM videos"
+          }
+
+          push_single_file() {
+            local FILE_PATH="$1"
+            local MAX_RETRIES=5
+            local RETRY=0
+
+            while [ $RETRY -lt $MAX_RETRIES ]; do
+              RETRY=$((RETRY + 1))
+
+              git fetch origin "$BRANCH" --quiet 2>/dev/null || true
+
+              LOCAL_HEAD=$(git rev-parse HEAD 2>/dev/null || echo "none")
+              REMOTE_HEAD=$(git rev-parse origin/"$BRANCH" 2>/dev/null || echo "none")
+
+              if [ "$LOCAL_HEAD" != "$REMOTE_HEAD" ] && [ "$REMOTE_HEAD" != "none" ]; then
+                echo "    Syncing with remote..."
+                git reset --hard origin/"$BRANCH" 2>/dev/null || true
+
+                mkdir -p videos
+                cp -r "$BACKUP_DIR"/* videos/ 2>/dev/null || true
+              fi
+
+              git add "$FILE_PATH" 2>/dev/null || true
+
+              if git diff --cached --quiet 2>/dev/null; then
+                echo "    File already exists or no changes"
+                return 0
+              fi
+
+              FILENAME=$(basename "$FILE_PATH")
+              git commit -m "[AVASAM] Add: $FILENAME [skip ci]" --quiet 2>/dev/null || true
+
+              echo "    Push attempt $RETRY/$MAX_RETRIES..."
+              if timeout 120 git push origin HEAD:"$BRANCH" 2>&1; then
+                echo "    SUCCESS!"
+                return 0
+              else
+                echo "    Push failed, retrying..."
+                sleep $((2 + RANDOM % 5))
+              fi
+            done
+
+            echo "    WARNING: Failed to push $FILE_PATH after $MAX_RETRIES attempts"
+            return 1
+          }
+
+          push_batch() {
+            local BATCH_SIZE=5
+            local FILES=("$@")
+            local BATCH_COUNT=0
+            local BATCH_FILES=()
+            local TOTAL_PUSHED=0
+            local TOTAL_FILES=${#FILES[@]}
+
+            for FILE in "${FILES[@]}"; do
+              BATCH_FILES+=("$FILE")
+              BATCH_COUNT=$((BATCH_COUNT + 1))
+
+              if [ $BATCH_COUNT -ge $BATCH_SIZE ]; then
+                TOTAL_PUSHED=$((TOTAL_PUSHED + BATCH_COUNT))
+                echo ""
+                echo ">>> Pushing batch ($TOTAL_PUSHED/$TOTAL_FILES files)..."
+
+                git fetch origin "$BRANCH" --quiet 2>/dev/null || true
+                git reset --hard origin/"$BRANCH" 2>/dev/null || true
+
+                mkdir -p videos
+                cp -r "$BACKUP_DIR"/* videos/ 2>/dev/null || true
+
+                for BF in "${BATCH_FILES[@]}"; do
+                  git add "$BF" 2>/dev/null || true
+                done
+
+                if ! git diff --cached --quiet 2>/dev/null; then
+                  git commit -m "[AVASAM] Add batch of $BATCH_COUNT files [skip ci]" --quiet 2>/dev/null || true
+
+                  local PUSH_RETRY=0
+                  local PUSH_SUCCESS=false
+                  while [ $PUSH_RETRY -lt 5 ]; do
+                    PUSH_RETRY=$((PUSH_RETRY + 1))
+                    if timeout 180 git push origin HEAD:"$BRANCH" 2>&1; then
+                      PUSH_SUCCESS=true
+                      echo "    Batch pushed successfully!"
+                      break
+                    else
+                      echo "    Batch push failed, attempt $PUSH_RETRY/5..."
+                      git fetch origin "$BRANCH" --quiet 2>/dev/null || true
+                      git reset --hard origin/"$BRANCH" 2>/dev/null || true
+                      mkdir -p videos
+                      cp -r "$BACKUP_DIR"/* videos/ 2>/dev/null || true
+                      for BF in "${BATCH_FILES[@]}"; do
+                        git add "$BF" 2>/dev/null || true
+                      done
+                      if ! git diff --cached --quiet 2>/dev/null; then
+                        git commit -m "[AVASAM] Add batch of $BATCH_COUNT files [skip ci]" --quiet 2>/dev/null || true
+                      fi
+                      sleep $((3 + RANDOM % 7))
+                    fi
+                  done
+
+                  if [ "$PUSH_SUCCESS" = false ]; then
+                    echo "    WARNING: Batch push failed, trying files individually..."
+                    for BF in "${BATCH_FILES[@]}"; do
+                      push_single_file "$BF"
+                    done
+                  fi
+                fi
+
+                BATCH_FILES=()
+                BATCH_COUNT=0
+                sleep 2
+              fi
+            done
+
+            if [ ${#BATCH_FILES[@]} -gt 0 ]; then
+              TOTAL_PUSHED=$((TOTAL_PUSHED + ${#BATCH_FILES[@]}))
+              echo ""
+              echo ">>> Pushing final batch ($TOTAL_PUSHED/$TOTAL_FILES files)..."
+
+              git fetch origin "$BRANCH" --quiet 2>/dev/null || true
+              git reset --hard origin/"$BRANCH" 2>/dev/null || true
+              mkdir -p videos
+              cp -r "$BACKUP_DIR"/* videos/ 2>/dev/null || true
+
+              for BF in "${BATCH_FILES[@]}"; do
+                git add "$BF" 2>/dev/null || true
+              done
+
+              if ! git diff --cached --quiet 2>/dev/null; then
+                git commit -m "[AVASAM] Add final batch [skip ci]" --quiet 2>/dev/null || true
+
+                local PUSH_RETRY=0
+                while [ $PUSH_RETRY -lt 5 ]; do
+                  PUSH_RETRY=$((PUSH_RETRY + 1))
+                  if timeout 180 git push origin HEAD:"$BRANCH" 2>&1; then
+                    echo "    Final batch pushed successfully!"
+                    break
+                  else
+                    echo "    Push failed, attempt $PUSH_RETRY/5..."
+                    sleep $((3 + RANDOM % 7))
+                    git fetch origin "$BRANCH" --quiet 2>/dev/null || true
+                    git reset --hard origin/"$BRANCH" 2>/dev/null || true
+                    mkdir -p videos
+                    cp -r "$BACKUP_DIR"/* videos/ 2>/dev/null || true
+                    for BF in "${BATCH_FILES[@]}"; do
+                      git add "$BF" 2>/dev/null || true
+                    done
+                    if ! git diff --cached --quiet 2>/dev/null; then
+                      git commit -m "[AVASAM] Add final batch [skip ci]" --quiet 2>/dev/null || true
+                    fi
+                  fi
+                done
+              fi
+            fi
+          }
+
+          echo ""
+          echo "=========================================="
+          echo "Starting incremental push process..."
+          echo "=========================================="
+
+          echo "Syncing with remote repository..."
+          git fetch origin "$BRANCH"
+          git reset --hard origin/"$BRANCH"
+
+          mkdir -p videos
+          cp -r "$BACKUP_DIR"/* videos/
+
+          echo "Analyzing files to push..."
+          ALL_FILES=()
+
+          while IFS= read -r -d '' FILE; do
+            ALL_FILES+=("$FILE")
+          done < <(find videos -name "README.md" -print0 2>/dev/null)
+
+          while IFS= read -r -d '' FILE; do
+            ALL_FILES+=("$FILE")
+          done < <(find videos -type f \( -name "*.zip" -o -name "*.z[0-9]*" -o -name "*.mp4" -o -name "*.mp3" -o -name "*.m4a" \) -print0 2>/dev/null | sort -z)
 
           TOTAL_FILES=${#ALL_FILES[@]}
           echo "Found $TOTAL_FILES files to push"
