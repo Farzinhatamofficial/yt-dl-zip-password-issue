@@ -96,7 +96,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3-pip ffmpeg zip curl jq bc unzip
+          sudo apt-get install -y python3-pip ffmpeg zip p7zip-full curl jq bc unzip
 
           # Install Deno (JS runtime required by yt-dlp for YouTube n-challenge solving)
           curl -fsSL https://deno.land/install.sh | sh
@@ -380,29 +380,26 @@ jobs:
               echo "Splitting $BASENAME into ${SPLIT_MB}MB parts..."
 
               ARCHIVE_BASE="$BACKUP_DIR/${FINAL_FOLDER_NAME}/${FINAL_FOLDER_NAME}"
-              TEMP_ZIP="${ARCHIVE_BASE}_temp.zip"
 
-              # Create a single zip first
               if [ -n "$ZIP_PASSWORD" ]; then
-                zip -0 -P "${ZIP_PASSWORD}" "${TEMP_ZIP}" "$FILE"
+                # Password-protected: use 7z with standard zip extension naming
+                # 7z creates: file.zip, file.z01, file.z02, ... (WinRAR/7-Zip compatible)
+                7z a \
+                  -tzip \
+                  -v${SPLIT_MB}m \
+                  -p"${ZIP_PASSWORD}" \
+                  -mx=0 \
+                  "${ARCHIVE_BASE}.zip" \
+                  "$FILE"
               else
-                zip -0 "${TEMP_ZIP}" "$FILE"
+                # No password: use zip's native split — creates file.zip + file.z01, file.z02, ...
+                # Users just double-click file.zip — WinRAR, 7-Zip, Ark all handle it natively
+                SPLIT_BYTES_ZIP=$(( SPLIT_MB * 1024 * 1024 ))
+                zip -0 -s ${SPLIT_MB}m "${ARCHIVE_BASE}.zip" "$FILE"
               fi
 
-              # Split into parts with .zip extension for better compatibility
-              cd "$BACKUP_DIR/${FINAL_FOLDER_NAME}/"
-              split -b ${SPLIT_MB}M -d --additional-suffix=.zip "${FINAL_FOLDER_NAME}_temp.zip" "${FINAL_FOLDER_NAME}.part"
-
-              # Rename first part to .zip for main file
-              if [ -f "${FINAL_FOLDER_NAME}.part00.zip" ]; then
-                mv "${FINAL_FOLDER_NAME}.part00.zip" "${FINAL_FOLDER_NAME}.zip"
-              fi
-
-              # Remove temp zip
-              rm -f "${FINAL_FOLDER_NAME}_temp.zip"
-              cd - > /dev/null
-
-              PART_COUNT=$(ls "$BACKUP_DIR/${FINAL_FOLDER_NAME}/"*.zip 2>/dev/null | wc -l)
+              # Collect all split parts (file.zip, file.z01, file.z02, ...)
+              PART_COUNT=$(ls "$BACKUP_DIR/${FINAL_FOLDER_NAME}/"*.zip "$BACKUP_DIR/${FINAL_FOLDER_NAME}/"*.z[0-9]* 2>/dev/null | wc -l)
               echo "Created $PART_COUNT parts"
 
               TOTAL_SIZE=0
@@ -416,13 +413,19 @@ jobs:
 
               DOWNLOAD_LINKS_MD=""
               LINK_NUM=0
-              for part_file in $(ls "$BACKUP_DIR/${FINAL_FOLDER_NAME}/"*.zip 2>/dev/null | sort); do
+              # Sort: .zip first, then .z01, .z02, ...
+              for part_file in $(ls "$BACKUP_DIR/${FINAL_FOLDER_NAME}/"*.zip "$BACKUP_DIR/${FINAL_FOLDER_NAME}/"*.z[0-9]* 2>/dev/null | sort -V); do
                 if [ -f "$part_file" ]; then
                   PART_BASENAME=$(basename "$part_file")
                   PART_ENCODED=$(urlencode "${PART_BASENAME}")
                   RAW_LINK="https://github.com/${REPO_OWNER}/${REPO_NAME}/raw/${BRANCH}/videos/${FOLDER_ENCODED}/${PART_ENCODED}"
                   LINK_NUM=$((LINK_NUM + 1))
-                  DOWNLOAD_LINKS_MD="${DOWNLOAD_LINKS_MD}| ${LINK_NUM} | \`${PART_BASENAME}\` | [Download](${RAW_LINK}) |"
+                  DOWNLOAD_LINKS_MD="${DOWNLOAD_LINKS_MD}| ${LINK_NUM} | \`${PART_BASENAME}\` | [Download](${RAW_LINK}) |"$'\n'
+                fi
+              done
+
+              # Determine main zip filename for instructions
+              MAIN_ZIP="${FINAL_FOLDER_NAME}.zip"
 
               README_FILE="$BACKUP_DIR/${FINAL_FOLDER_NAME}/README.md"
               {
@@ -449,6 +452,8 @@ jobs:
                 printf '%s\n' ""
                 printf '%s\n' "## Download Links"
                 printf '%s\n' ""
+                printf '%s\n' "> ⬇️ Download **all parts**, then open \`${MAIN_ZIP}\` — the other parts are found automatically."
+                printf '%s\n' ""
                 printf '%s\n' "| # | File | Link |"
                 printf '%s\n' "|---|------|------|"
                 printf '%s' "${DOWNLOAD_LINKS_MD}"
@@ -457,28 +462,22 @@ jobs:
                 printf '%s\n' ""
                 printf '%s\n' "## How to Extract"
                 printf '%s\n' ""
-                printf '%s\n' "**Download all parts first!**"
+                printf '%s\n' "Download all parts into the **same folder**, then:"
                 printf '%s\n' ""
-                printf '%s\n' "**Windows:**"
-                printf '%s\n' "\`\`\`cmd"
-                printf '%s\n' "copy /b ${FINAL_FOLDER_NAME}.zip+${FINAL_FOLDER_NAME}.part*.zip complete.zip"
-                printf '%s\n' "\`\`\`"
-                printf '%s\n' "Then extract \`complete.zip\` with WinRAR or built-in tools"
-                printf '%s\n' ""
-                printf '%s\n' "**Mac:**"
-                printf '%s\n' "\`\`\`bash"
-                printf '%s\n' "cat ${FINAL_FOLDER_NAME}.zip ${FINAL_FOLDER_NAME}.part*.zip > complete.zip && unzip complete.zip"
-                printf '%s\n' "\`\`\`"
-                printf '%s\n' ""
-                printf '%s\n' "**Linux:**"
-                printf '%s\n' "\`\`\`bash"
-                printf '%s\n' "cat ${FINAL_FOLDER_NAME}.zip ${FINAL_FOLDER_NAME}.part*.zip > complete.zip && unzip complete.zip"
-                printf '%s\n' "\`\`\`"
-                printf '%s\n' ""
-                printf '%s\n' "**Android:** Use ZArchiver or RAR app, open first part, extract all"
                 if [ -n "$ZIP_PASSWORD" ]; then
-                  printf '%s\n' ""
-                  printf '%s\n' "Enter password when prompted"
+                  printf '%s\n' "| OS | Steps |"
+                  printf '%s\n' "|----|-------|"
+                  printf '%s\n' "| **Windows** | Right-click \`${MAIN_ZIP}\` → *Extract Here* (needs [7-Zip](https://www.7-zip.org/) or WinRAR) → enter password |"
+                  printf '%s\n' "| **Mac** | Open with [Keka](https://www.keka.io/) → enter password |"
+                  printf '%s\n' "| **Linux** | \`unzip ${MAIN_ZIP}\` or right-click → Extract → enter password |"
+                  printf '%s\n' "| **Android** | Use [ZArchiver](https://play.google.com/store/apps/details?id=ru.zdevs.zarchiver) → tap \`${MAIN_ZIP}\` → enter password |"
+                else
+                  printf '%s\n' "| OS | Steps |"
+                  printf '%s\n' "|----|-------|"
+                  printf '%s\n' "| **Windows** | Double-click \`${MAIN_ZIP}\` — opens in Explorer, WinRAR, or 7-Zip automatically |"
+                  printf '%s\n' "| **Mac** | Double-click \`${MAIN_ZIP}\` — extracts with Archive Utility or The Unarchiver |"
+                  printf '%s\n' "| **Linux** | \`unzip ${MAIN_ZIP}\` or right-click → Extract Here (Ark/File Manager) |"
+                  printf '%s\n' "| **Android** | Tap \`${MAIN_ZIP}\` in your file manager — or use [ZArchiver](https://play.google.com/store/apps/details?id=ru.zdevs.zarchiver) |"
                 fi
                 printf '%s\n' ""
                 printf '%s\n' "---"
@@ -492,7 +491,9 @@ jobs:
               if [ -n "$ZIP_PASSWORD" ]; then
                 echo "$BASENAME - creating password-protected zip archive"
 
-                zip -0 -P "${ZIP_PASSWORD}" "$BACKUP_DIR/${FINAL_FOLDER_NAME}/${FINAL_FOLDER_NAME}.zip" "$FILE"
+                zip -0 -P "${ZIP_PASSWORD}" \
+                  "$BACKUP_DIR/${FINAL_FOLDER_NAME}/${FINAL_FOLDER_NAME}.zip" \
+                  "$FILE"
 
                 SIZE_MB=$(echo "scale=2; $SIZE / 1024 / 1024" | bc)
                 FILE_ENCODED=$(urlencode "${FINAL_FOLDER_NAME}.zip")
@@ -527,15 +528,12 @@ jobs:
                   printf '%s\n' ""
                   printf '%s\n' "## How to Extract"
                   printf '%s\n' ""
-                  printf '%s\n' "**Windows:** Right-click → Extract All, or use WinRAR/7-Zip"
-                  printf '%s\n' ""
-                  printf '%s\n' "**Mac:** Double-click or \`unzip ${FINAL_FOLDER_NAME}.zip\`"
-                  printf '%s\n' ""
-                  printf '%s\n' "**Linux:** \`unzip ${FINAL_FOLDER_NAME}.zip\`"
-                  printf '%s\n' ""
-                  printf '%s\n' "**Android:** Use built-in file manager or ZArchiver"
-                  printf '%s\n' ""
-                  printf '%s\n' "Enter password when prompted"
+                  printf '%s\n' "| OS | Steps |"
+                  printf '%s\n' "|----|-------|"
+                  printf '%s\n' "| **Windows** | Double-click \`${FINAL_FOLDER_NAME}.zip\` → enter password |"
+                  printf '%s\n' "| **Mac** | Double-click → enter password (or use [The Unarchiver](https://theunarchiver.com/)) |"
+                  printf '%s\n' "| **Linux** | \`unzip ${FINAL_FOLDER_NAME}.zip\` → enter password |"
+                  printf '%s\n' "| **Android** | Tap the file in your file manager → enter password |"
                   printf '%s\n' ""
                   printf '%s\n' "---"
                   printf '%s\n' ""
@@ -580,7 +578,7 @@ jobs:
                   printf '%s\n' ""
                   printf '%s\n' "---"
                   printf '%s\n' ""
-                  printf '%s\n' "Ready to use - no extraction needed!"
+                  printf '%s\n' "Ready to use — no extraction needed!"
                   printf '%s\n' ""
                   printf '%s\n' "---"
                   printf '%s\n' ""
@@ -839,7 +837,7 @@ jobs:
 
           while IFS= read -r -d '' FILE; do
             ALL_FILES+=("$FILE")
-          done < <(find videos -type f \( -name "*.zip" -o -name "*.mp4" -o -name "*.mp3" -o -name "*.m4a" \) -print0 2>/dev/null | sort -z)
+          done < <(find videos -type f \( -name "*.zip" -o -name "*.z[0-9]*" -o -name "*.mp4" -o -name "*.mp3" -o -name "*.m4a" \) -print0 2>/dev/null | sort -z)
 
           TOTAL_FILES=${#ALL_FILES[@]}
           echo "Found $TOTAL_FILES files to push"
