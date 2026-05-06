@@ -1,14 +1,14 @@
-name: YouTube Video Downloader
+name: 01- 💾 You tube Downloader
 
 on:
   workflow_dispatch:
     inputs:
       youtube_url:
-        description: 'YouTube URL'
+        description: '🔗 YouTube video URL'
         required: true
         type: string
       quality:
-        description: 'Video quality'
+        description: '🎬 Video quality'
         required: false
         default: 'best'
         type: choice
@@ -21,7 +21,7 @@ on:
           - 480
           - audio
       password:
-        description: 'ZIP password (optional)'
+        description: '🔒 Password for zip files (optional)'
         required: false
         default: ''
         type: string
@@ -40,37 +40,52 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: Configure Git
+      - name: Configure Git for Large Files
         run: |
           git config --global http.postBuffer 524288000
           git config --global http.maxRequestBuffer 100M
           git config --global core.compression 0
+          git config --global pack.windowMemory 256m
+          git config --global pack.packSizeLimit 100m
+          git config --global pack.threads 1
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-      - name: Start WARP
+      - name: Start WARP Container
         run: |
           docker network create warp-net || true
-          docker run -d --name warp --network warp-net -p 1080:1080 --cap-add NET_ADMIN \
-            --sysctl net.ipv6.conf.all.disable_ipv6=0 --sysctl net.ipv4.conf.all.src_valid_mark=1 \
-            -v warp-data:/var/lib/cloudflare-warp caomingjun/warp
+          docker run -d \
+            --name warp \
+            --restart=always \
+            --network warp-net \
+            -p 1080:1080 \
+            --cap-add NET_ADMIN \
+            --sysctl net.ipv6.conf.all.disable_ipv6=0 \
+            --sysctl net.ipv4.conf.all.src_valid_mark=1 \
+            -v warp-data:/var/lib/cloudflare-warp \
+            caomingjun/warp
           sleep 15
           for i in {1..5}; do
-            if curl -s --max-time 5 --socks5-hostname 127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace 2>/dev/null | grep -qE "warp=(on|plus)"; then
-              echo "WARP active"; break
+            RESULT=$(curl -s --max-time 5 --socks5-hostname 127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace 2>/dev/null || echo "failed")
+            if echo "$RESULT" | grep -qE "warp=(on|plus)"; then
+              echo "WARP is active!"
+              break
+            else
+              sleep 5
             fi
-            sleep 5
           done
 
       - name: Install Dependencies
         run: |
-          sudo apt-get update && sudo apt-get install -y python3-pip ffmpeg zip p7zip-full curl jq bc
+          sudo apt-get update
+          sudo apt-get install -y python3-pip ffmpeg zip p7zip-full curl jq bc unzip
           curl -fsSL https://deno.land/install.sh | sh
           export DENO_INSTALL="$HOME/.deno"
+          export PATH="$DENO_INSTALL/bin:$PATH"
           echo "$DENO_INSTALL/bin" >> $GITHUB_PATH
           pip3 install --upgrade yt-dlp
 
-      - name: Download Video
+      - name: Download YouTube Video
         run: |
           URL="${{ github.event.inputs.youtube_url }}"
           QUALITY="${{ github.event.inputs.quality }}"
@@ -78,85 +93,190 @@ jobs:
           SPLIT_MB=45
           SPLIT_BYTES=$(( SPLIT_MB * 1024 * 1024 ))
           BACKUP_DIR="/tmp/video_backup_$$"
-          mkdir -p "$BACKUP_DIR" videos tmp_downloads
+          mkdir -p "$BACKUP_DIR"
           echo "$BACKUP_DIR" > /tmp/backup_dir_path.txt
+          mkdir -p videos tmp_downloads
 
-          sanitize_name() { echo "$1" | sed 's/ /-/g' | sed 's/　/-/g' | tr -s '-'; }
-          urlencode() { python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$1"; }
+          sanitize_name() {
+            echo "$1" | sed 's/ /-/g' | sed 's/　/-/g' | tr -s '-'
+          }
+
+          urlencode() {
+            python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$1"
+          }
 
           case "$QUALITY" in
-            "audio") FORMAT="bestaudio/bestaudio*" ;;
-            "best") FORMAT="bestvideo+bestaudio/bestvideo*+bestaudio*/best" ;;
-            "2160"|"4k") FORMAT="bestvideo[height=2160]+bestaudio/bestvideo[height<=2160]+bestaudio/bestvideo*+bestaudio*" ;;
-            "1440"|"2k") FORMAT="bestvideo[height=1440]+bestaudio/bestvideo[height<=1440]+bestaudio/bestvideo*+bestaudio*" ;;
-            "1080") FORMAT="bestvideo[height=1080]+bestaudio/bestvideo[height<=1080]+bestaudio/bestvideo*+bestaudio*" ;;
-            "720") FORMAT="bestvideo[height=720]+bestaudio/bestvideo[height<=720]+bestaudio/bestvideo*+bestaudio*" ;;
-            "480") FORMAT="bestvideo[height=480]+bestaudio/bestvideo[height<=480]+bestaudio/bestvideo*+bestaudio*" ;;
-            *) FORMAT="bestvideo+bestaudio/bestvideo*+bestaudio*/best" ;;
+            "audio")
+              FORMAT="bestaudio/bestaudio*"
+              ;;
+            "best")
+              FORMAT="bestvideo+bestaudio/bestvideo*+bestaudio*/best"
+              ;;
+            "2160"|"4k")
+              FORMAT="bestvideo[height=2160]+bestaudio/bestvideo[height<=2160]+bestaudio/bestvideo[height=2160]*+bestaudio*/bestvideo[height<=2160]*+bestaudio*"
+              ;;
+            "1440"|"2k")
+              FORMAT="bestvideo[height=1440]+bestaudio/bestvideo[height<=1440]+bestaudio/bestvideo[height=1440]*+bestaudio*/bestvideo[height<=1440]*+bestaudio*"
+              ;;
+            "1080")
+              FORMAT="bestvideo[height=1080]+bestaudio/bestvideo[height<=1080]+bestaudio/bestvideo[height=1080]*+bestaudio*/bestvideo[height<=1080]*+bestaudio*"
+              ;;
+            "720")
+              FORMAT="bestvideo[height=720]+bestaudio/bestvideo[height<=720]+bestaudio/bestvideo[height=720]*+bestaudio*/bestvideo[height<=720]*+bestaudio*"
+              ;;
+            "480")
+              FORMAT="bestvideo[height=480]+bestaudio/bestvideo[height<=480]+bestaudio/bestvideo[height=480]*+bestaudio*/bestvideo[height<=480]*+bestaudio*"
+              ;;
+            *)
+              FORMAT="bestvideo+bestaudio/bestvideo*+bestaudio*/best"
+              ;;
           esac
 
           if [ "$QUALITY" = "audio" ]; then
-            COMMON_FLAGS="--output tmp_downloads/%(title)s.%(ext)s --no-part --no-playlist --retries 5 --fragment-retries 5 --no-check-certificates --concurrent-fragments 8"
+            COMMON_FLAGS="--output tmp_downloads/%(title)s.%(ext)s --no-part --no-playlist --retries 5 --fragment-retries 5 --no-check-certificates --concurrent-fragments 8 --buffer-size 16K --http-chunk-size 10M --progress --newline"
           else
-            COMMON_FLAGS="--merge-output-format mp4 --format-sort res --output tmp_downloads/%(title)s.%(ext)s --no-part --no-playlist --retries 5 --fragment-retries 5 --no-check-certificates --concurrent-fragments 8"
+            COMMON_FLAGS="--merge-output-format mp4 --format-sort res,+codec:vp9.1,+size --output tmp_downloads/%(title)s.%(ext)s --no-part --no-playlist --retries 5 --fragment-retries 5 --no-check-certificates --concurrent-fragments 8 --buffer-size 16K --http-chunk-size 10M --progress --newline"
           fi
 
           download_video() {
             case $1 in
-              1) yt-dlp --proxy "socks5://127.0.0.1:1080" --format "$FORMAT" $COMMON_FLAGS --extractor-args "youtube:player_client=web" --js-runtimes deno "$URL" ;;
-              2) yt-dlp --proxy "socks5://127.0.0.1:1080" --format "$FORMAT" $COMMON_FLAGS --extractor-args "youtube:player_client=tv_embedded" "$URL" ;;
-              3) yt-dlp --proxy "socks5://127.0.0.1:1080" --format "$FORMAT" $COMMON_FLAGS --extractor-args "youtube:player_client=android_vr" "$URL" ;;
-              4) yt-dlp --proxy "socks5://127.0.0.1:1080" --format "$FORMAT" $COMMON_FLAGS --extractor-args "youtube:player_client=mweb" "$URL" ;;
-              5) yt-dlp --format "$FORMAT" $COMMON_FLAGS --extractor-args "youtube:player_client=web" --js-runtimes deno "$URL" ;;
-              6) yt-dlp --format "$FORMAT" $COMMON_FLAGS --extractor-args "youtube:player_client=mweb" "$URL" ;;
+              1)
+                yt-dlp --proxy "socks5://127.0.0.1:1080" --format "$FORMAT" $COMMON_FLAGS \
+                  --extractor-args "youtube:player_client=web" --js-runtimes deno \
+                  --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+                  --add-header "Accept-Language:en-US,en;q=0.9" "$URL"
+                ;;
+              2)
+                yt-dlp --proxy "socks5://127.0.0.1:1080" --format "$FORMAT" $COMMON_FLAGS \
+                  --extractor-args "youtube:player_client=tv_embedded" "$URL"
+                ;;
+              3)
+                yt-dlp --proxy "socks5://127.0.0.1:1080" --format "$FORMAT" $COMMON_FLAGS \
+                  --extractor-args "youtube:player_client=android_vr" "$URL"
+                ;;
+              4)
+                yt-dlp --proxy "socks5://127.0.0.1:1080" --format "$FORMAT" $COMMON_FLAGS \
+                  --extractor-args "youtube:player_client=mweb" "$URL"
+                ;;
+              5)
+                yt-dlp --proxy "socks5://127.0.0.1:1080" --format "$FORMAT" $COMMON_FLAGS \
+                  --extractor-args "youtube:player_client=android" \
+                  --user-agent "Mozilla/5.0 (Linux; Android 12)" "$URL"
+                ;;
+              6)
+                yt-dlp --format "$FORMAT" $COMMON_FLAGS \
+                  --extractor-args "youtube:player_client=web" --js-runtimes deno "$URL"
+                ;;
+              7)
+                yt-dlp --format "$FORMAT" $COMMON_FLAGS \
+                  --extractor-args "youtube:player_client=mweb" "$URL"
+                ;;
+              8)
+                yt-dlp --proxy "socks5://127.0.0.1:1080" --format "$FORMAT" $COMMON_FLAGS \
+                  --extractor-args "youtube:player_client=web,mweb,android_vr" --js-runtimes deno "$URL"
+                ;;
             esac
           }
 
-          for METHOD in 1 2 3 4 5 6; do
-            if download_video $METHOD; then echo "Success with method $METHOD"; break; fi
-            sleep 3
+          DOWNLOAD_SUCCESS=false
+          for METHOD in 1 2 3 4 5 6 7 8; do
+            if download_video $METHOD; then
+              DOWNLOAD_SUCCESS=true
+              echo "Download successful with method $METHOD!"
+              if [ "$QUALITY" != "best" ] && [ "$QUALITY" != "audio" ]; then
+                for DOWNLOADED_FILE in tmp_downloads/*.mp4 tmp_downloads/*.webm tmp_downloads/*.mkv; do
+                  [ -f "$DOWNLOADED_FILE" ] || continue
+                  ACTUAL_HEIGHT=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "$DOWNLOADED_FILE" 2>/dev/null || echo "unknown")
+                  if [ "$ACTUAL_HEIGHT" != "unknown" ] && [ "$ACTUAL_HEIGHT" -lt $(( QUALITY - 50 )) ] 2>/dev/null; then
+                    echo "⚠️  WARNING: Downloaded ${ACTUAL_HEIGHT}p instead of ${QUALITY}p"
+                  fi
+                done
+              fi
+              break
+            else
+              sleep 3
+            fi
           done
+
+          if [ "$DOWNLOAD_SUCCESS" = false ]; then
+            echo "All download methods failed!"
+            exit 1
+          fi
 
           find tmp_downloads -name "*.part" -delete
           REPO_OWNER="${{ github.repository_owner }}"
           REPO_NAME="${{ github.event.repository.name }}"
           BRANCH="${GITHUB_REF_NAME}"
 
+          RANDOM_WORDS=("alpha" "beta" "gamma" "delta" "epsilon" "zeta" "theta" "kappa" "lambda" "sigma" "omega" "nova" "star" "moon" "sun" "sky" "cloud" "river" "ocean" "mountain")
+
+          get_random_word() {
+            echo "${RANDOM_WORDS[$RANDOM % ${#RANDOM_WORDS[@]}]}_$RANDOM"
+          }
+
+          get_unique_folder() {
+            local BASE_PATH="$1"
+            local NAME="$2"
+            if [ ! -d "$BASE_PATH/$NAME" ] && [ ! -d "$BACKUP_DIR/$NAME" ]; then
+              echo "$NAME"
+              return
+            fi
+            local RANDOM_SUFFIX=$(get_random_word)
+            while [ -d "$BASE_PATH/${NAME}_${RANDOM_SUFFIX}" ] || [ -d "$BACKUP_DIR/${NAME}_${RANDOM_SUFFIX}" ]; do
+              RANDOM_SUFFIX=$(get_random_word)
+            done
+            echo "${NAME}_${RANDOM_SUFFIX}"
+          }
+
+          > /tmp/video_info.txt
+          FILE_INDEX=0
           for FILE in tmp_downloads/*; do
             [ -f "$FILE" ] || continue
             SIZE=$(stat -c%s "$FILE")
             BASENAME=$(basename "$FILE")
-            FILENAME_NO_EXT=$(sanitize_name "${BASENAME%.*}")
+            FILENAME_NO_EXT="${BASENAME%.*}"
             EXT="${BASENAME##*.}"
-            FINAL_FOLDER_NAME="$FILENAME_NO_EXT"
+            FILE_INDEX=$((FILE_INDEX + 1))
+            FILENAME_NO_EXT=$(sanitize_name "$FILENAME_NO_EXT")
+            FINAL_FOLDER_NAME=$(get_unique_folder "videos" "$FILENAME_NO_EXT")
             mkdir -p "$BACKUP_DIR/${FINAL_FOLDER_NAME}"
+            echo "${FILENAME_NO_EXT}|${FINAL_FOLDER_NAME}" >> /tmp/video_info.txt
             FOLDER_ENCODED=$(urlencode "${FINAL_FOLDER_NAME}")
 
             if [ "$SIZE" -gt "$SPLIT_BYTES" ]; then
-              cd "$(dirname "$FILE")"
+              ARCHIVE_BASE="$BACKUP_DIR/${FINAL_FOLDER_NAME}/${FINAL_FOLDER_NAME}"
               if [ -n "$ZIP_PASSWORD" ]; then
-                zip -s ${SPLIT_MB}m -P "${ZIP_PASSWORD}" -0 "$BACKUP_DIR/${FINAL_FOLDER_NAME}/${FINAL_FOLDER_NAME}.zip" "$(basename "$FILE")"
+                7z a -v${SPLIT_MB}m -p"${ZIP_PASSWORD}" -mhe=on -mx=0 "${ARCHIVE_BASE}.7z" "$FILE"
               else
-                zip -s ${SPLIT_MB}m -0 "$BACKUP_DIR/${FINAL_FOLDER_NAME}/${FINAL_FOLDER_NAME}.zip" "$(basename "$FILE")"
+                7z a -v${SPLIT_MB}m -mx=0 "${ARCHIVE_BASE}.7z" "$FILE"
               fi
-              cd - > /dev/null
-              PART_COUNT=$(ls "$BACKUP_DIR/${FINAL_FOLDER_NAME}/"*.z* 2>/dev/null | wc -l)
-              TOTAL_SIZE_MB=$(echo "scale=2; $SIZE / 1024 / 1024" | bc)
-
-              DOWNLOAD_LINKS=""
-              NUM=0
-              for part in $(ls "$BACKUP_DIR/${FINAL_FOLDER_NAME}/"*.z* 2>/dev/null | sort -V); do
-                NUM=$((NUM + 1))
-                PART_NAME=$(basename "$part")
-                PART_ENC=$(urlencode "$PART_NAME")
-                DOWNLOAD_LINKS="${DOWNLOAD_LINKS}| ${NUM} | ${PART_NAME} | [Download](https://github.com/${REPO_OWNER}/${REPO_NAME}/raw/${BRANCH}/videos/${FOLDER_ENCODED}/${PART_ENC}) |\n"
+              PART_COUNT=$(ls "$BACKUP_DIR/${FINAL_FOLDER_NAME}/"*.7z* 2>/dev/null | wc -l)
+              TOTAL_SIZE=0
+              for part_file in "$BACKUP_DIR/${FINAL_FOLDER_NAME}"/*; do
+                if [ -f "$part_file" ]; then
+                  PART_SIZE=$(stat -c%s "$part_file")
+                  TOTAL_SIZE=$((TOTAL_SIZE + PART_SIZE))
+                fi
+              done
+              TOTAL_SIZE_MB=$(echo "scale=2; $TOTAL_SIZE / 1024 / 1024" | bc)
+              DOWNLOAD_LINKS_MD=""
+              LINK_NUM=0
+              for part_file in $(ls "$BACKUP_DIR/${FINAL_FOLDER_NAME}/"*.7z* 2>/dev/null | sort); do
+                if [ -f "$part_file" ]; then
+                  PART_BASENAME=$(basename "$part_file")
+                  PART_ENCODED=$(urlencode "${PART_BASENAME}")
+                  RAW_LINK="https://github.com/${REPO_OWNER}/${REPO_NAME}/raw/${BRANCH}/videos/${FOLDER_ENCODED}/${PART_ENCODED}"
+                  LINK_NUM=$((LINK_NUM + 1))
+                  DOWNLOAD_LINKS_MD="${DOWNLOAD_LINKS_MD}| ${LINK_NUM} | \`${PART_BASENAME}\` | [Download](${RAW_LINK}) |"$'\n'
+                fi
               done
 
-              cat > "$BACKUP_DIR/${FINAL_FOLDER_NAME}/README.md" << EOF
+              cat > "$BACKUP_DIR/${FINAL_FOLDER_NAME}/README.md" << 'READMEEOF'
 # ${FILENAME_NO_EXT}
 
 | Property | Value |
 |----------|-------|
+| **Video** | \`${FILENAME_NO_EXT}\` |
 | **Source** | [YouTube](${URL}) |
 | **Size** | ${PART_COUNT} parts - ${TOTAL_SIZE_MB} MB |
 | **Quality** | ${QUALITY} |
@@ -165,76 +285,235 @@ jobs:
 ## Download Links
 | # | File | Link |
 |---|------|------|
-$(echo -e "$DOWNLOAD_LINKS")
+${DOWNLOAD_LINKS_MD}
 
 ## Extract
-Download ALL parts to same folder, then extract the .zip file.
-- **Windows/Mac**: Use 7-Zip or WinRAR
-- **Linux**: \`7z x ${FINAL_FOLDER_NAME}.zip\`
-- **Android**: Use RAR or ZArchiver app
+1. Download all parts (.7z.001, .7z.002...)
+2. Install [7-Zip](https://www.7-zip.org/) or [Keka](https://www.keka.io/)
+3. Right-click .7z.001 → Extract Here
+$([ -n "$ZIP_PASSWORD" ] && echo "4. Enter password when prompted" || echo "")
 
 *[avasam.ir](https://avasam.ir)*
-EOF
+READMEEOF
+              sed -i "s/\${FILENAME_NO_EXT}/$FILENAME_NO_EXT/g; s|\${URL}|$URL|g; s/\${PART_COUNT}/$PART_COUNT/g; s/\${TOTAL_SIZE_MB}/$TOTAL_SIZE_MB/g; s/\${QUALITY}/$QUALITY/g; s/\${DOWNLOAD_LINKS_MD}/$DOWNLOAD_LINKS_MD/g" "$BACKUP_DIR/${FINAL_FOLDER_NAME}/README.md"
+              if [ -n "$ZIP_PASSWORD" ]; then
+                sed -i 's/| \*\*Password\*\* | \$(.*) |/| **Password** | YES |/' "$BACKUP_DIR/${FINAL_FOLDER_NAME}/README.md"
+                sed -i 's/\$(.*echo "4\. Enter password when prompted".*)//g' "$BACKUP_DIR/${FINAL_FOLDER_NAME}/README.md"
+              else
+                sed -i 's/| \*\*Password\*\* | \$(.*) |/| **Password** | NO |/' "$BACKUP_DIR/${FINAL_FOLDER_NAME}/README.md"
+                sed -i '/\$(.*/d' "$BACKUP_DIR/${FINAL_FOLDER_NAME}/README.md"
+              fi
+
             else
               if [ -n "$ZIP_PASSWORD" ]; then
-                cd "$(dirname "$FILE")"
-                zip -P "${ZIP_PASSWORD}" -0 "$BACKUP_DIR/${FINAL_FOLDER_NAME}/${FINAL_FOLDER_NAME}.zip" "$(basename "$FILE")"
-                cd - > /dev/null
-                FILE_ENC=$(urlencode "${FINAL_FOLDER_NAME}.zip")
-                FNAME="${FINAL_FOLDER_NAME}.zip"
-              else
-                cp "$FILE" "$BACKUP_DIR/${FINAL_FOLDER_NAME}/${FINAL_FOLDER_NAME}.${EXT}"
-                FILE_ENC=$(urlencode "${FINAL_FOLDER_NAME}.${EXT}")
-                FNAME="${FINAL_FOLDER_NAME}.${EXT}"
-              fi
-              SIZE_MB=$(echo "scale=2; $SIZE / 1024 / 1024" | bc)
+                7z a -p"${ZIP_PASSWORD}" -mhe=on -mx=0 "$BACKUP_DIR/${FINAL_FOLDER_NAME}/${FINAL_FOLDER_NAME}.7z" "$FILE"
+                SIZE_MB=$(echo "scale=2; $SIZE / 1024 / 1024" | bc)
+                FILE_ENCODED=$(urlencode "${FINAL_FOLDER_NAME}.7z")
+                RAW_LINK="https://github.com/${REPO_OWNER}/${REPO_NAME}/raw/${BRANCH}/videos/${FOLDER_ENCODED}/${FILE_ENCODED}"
 
-              cat > "$BACKUP_DIR/${FINAL_FOLDER_NAME}/README.md" << EOF
+                cat > "$BACKUP_DIR/${FINAL_FOLDER_NAME}/README.md" << EOF
 # ${FILENAME_NO_EXT}
 
 | Property | Value |
 |----------|-------|
+| **Video** | \`${FILENAME_NO_EXT}\` |
 | **Source** | [YouTube](${URL}) |
 | **Size** | ${SIZE_MB} MB |
 | **Quality** | ${QUALITY} |
-| **Password** | $([ -n "$ZIP_PASSWORD" ] && echo "YES" || echo "NO") |
+| **Password** | YES |
 
 ## Download
-| File | Link |
-|------|------|
-| ${FNAME} | [Download](https://github.com/${REPO_OWNER}/${REPO_NAME}/raw/${BRANCH}/videos/${FOLDER_ENCODED}/${FILE_ENC}) |
+[\`${FINAL_FOLDER_NAME}.7z\`](${RAW_LINK})
+
+## Extract
+1. Install [7-Zip](https://www.7-zip.org/) or [Keka](https://www.keka.io/)
+2. Right-click .7z → Extract Here
+3. Enter password when prompted
 
 *[avasam.ir](https://avasam.ir)*
 EOF
+              else
+                cp "$FILE" "$BACKUP_DIR/${FINAL_FOLDER_NAME}/${FINAL_FOLDER_NAME}.${EXT}"
+                SIZE_MB=$(echo "scale=2; $SIZE / 1024 / 1024" | bc)
+                FILE_ENCODED=$(urlencode "${FINAL_FOLDER_NAME}.${EXT}")
+                RAW_LINK="https://github.com/${REPO_OWNER}/${REPO_NAME}/raw/${BRANCH}/videos/${FOLDER_ENCODED}/${FILE_ENCODED}"
+
+                cat > "$BACKUP_DIR/${FINAL_FOLDER_NAME}/README.md" << EOF
+# ${FILENAME_NO_EXT}
+
+| Property | Value |
+|----------|-------|
+| **Video** | \`${FILENAME_NO_EXT}\` |
+| **Source** | [YouTube](${URL}) |
+| **Size** | ${SIZE_MB} MB |
+| **Quality** | ${QUALITY} |
+
+## Download
+[\`${FINAL_FOLDER_NAME}.${EXT}\`](${RAW_LINK})
+
+Ready to play!
+
+*[avasam.ir](https://avasam.ir)*
+EOF
+              fi
             fi
           done
           rm -rf tmp_downloads
 
-      - name: Stop WARP
+      - name: Stop WARP Container
         if: always()
-        run: docker stop warp || true; docker rm warp || true
+        run: |
+          docker stop warp || true
+          docker rm warp || true
 
-      - name: Push Files
+      - name: Incremental Commit & Push
         run: |
           BRANCH="${GITHUB_REF_NAME}"
           REPO_OWNER="${{ github.repository_owner }}"
           REPO_NAME="${{ github.event.repository.name }}"
           BACKUP_DIR=$(cat /tmp/backup_dir_path.txt)
 
-          urlencode() { python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$1"; }
+          if [ $(find "$BACKUP_DIR" -type f 2>/dev/null | wc -l) -eq 0 ]; then
+            echo "ERROR: No files in backup directory!"
+            exit 1
+          fi
 
-          regenerate_readme() {
-            echo "# Downloaded Videos" > videos/README.md
-            echo "" >> videos/README.md
+          urlencode() {
+            python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$1"
+          }
+
+          regenerate_master_readme() {
+            MASTER_README="videos/README.md"
+            echo "# Downloaded Videos" > "$MASTER_README"
+            echo "" >> "$MASTER_README"
+            VIDEO_EMOJIS=("🎬" "🎥" "📽️" "🎞️" "📺" "🎦" "🎭" "🎪" "🎯" "🎮" "🎵" "🎶" "🎸" "🎹" "🎤")
             NUM=0
             for folder in videos/*/; do
               [ -d "$folder" ] || continue
               FOLDER_NAME=$(basename "$folder")
               [ -f "$folder/README.md" ] || continue
               NUM=$((NUM + 1))
-              FOLDER_ENC=$(urlencode "$FOLDER_NAME")
-              echo "- ${NUM}. [${FOLDER_NAME}](https://github.com/${REPO_OWNER}/${REPO_NAME}/tree/${BRANCH}/videos/${FOLDER_ENC})" >> videos/README.md
+              RANDOM_EMOJI="${VIDEO_EMOJIS[$RANDOM % ${#VIDEO_EMOJIS[@]}]}"
+              FOLDER_ENCODED=$(urlencode "$FOLDER_NAME")
+              FOLDER_LINK="https://github.com/${REPO_OWNER}/${REPO_NAME}/tree/${BRANCH}/videos/${FOLDER_ENCODED}"
+              printf -- "- %s %s [%s](%s)\n" "$NUM" "$RANDOM_EMOJI" "$FOLDER_NAME" "$FOLDER_LINK" >> "$MASTER_README"
             done
+          }
+
+          push_single_file() {
+            local FILE_PATH="$1"
+            local MAX_RETRIES=5
+            local RETRY=0
+            while [ $RETRY -lt $MAX_RETRIES ]; do
+              RETRY=$((RETRY + 1))
+              git fetch origin "$BRANCH" --quiet 2>/dev/null || true
+              LOCAL_HEAD=$(git rev-parse HEAD 2>/dev/null || echo "none")
+              REMOTE_HEAD=$(git rev-parse origin/"$BRANCH" 2>/dev/null || echo "none")
+              if [ "$LOCAL_HEAD" != "$REMOTE_HEAD" ] && [ "$REMOTE_HEAD" != "none" ]; then
+                git reset --hard origin/"$BRANCH" 2>/dev/null || true
+                mkdir -p videos
+                cp -r "$BACKUP_DIR"/* videos/ 2>/dev/null || true
+              fi
+              git add "$FILE_PATH" 2>/dev/null || true
+              if git diff --cached --quiet 2>/dev/null; then
+                return 0
+              fi
+              FILENAME=$(basename "$FILE_PATH")
+              git commit -m "[AVASAM] Add: $FILENAME [skip ci]" --quiet 2>/dev/null || true
+              if timeout 120 git push origin HEAD:"$BRANCH" 2>&1; then
+                return 0
+              else
+                sleep $((2 + RANDOM % 5))
+              fi
+            done
+            return 1
+          }
+
+          push_batch() {
+            local BATCH_SIZE=5
+            local FILES=("$@")
+            local BATCH_COUNT=0
+            local BATCH_FILES=()
+            local TOTAL_PUSHED=0
+            local TOTAL_FILES=${#FILES[@]}
+            for FILE in "${FILES[@]}"; do
+              BATCH_FILES+=("$FILE")
+              BATCH_COUNT=$((BATCH_COUNT + 1))
+              if [ $BATCH_COUNT -ge $BATCH_SIZE ]; then
+                TOTAL_PUSHED=$((TOTAL_PUSHED + BATCH_COUNT))
+                git fetch origin "$BRANCH" --quiet 2>/dev/null || true
+                git reset --hard origin/"$BRANCH" 2>/dev/null || true
+                mkdir -p videos
+                cp -r "$BACKUP_DIR"/* videos/ 2>/dev/null || true
+                for BF in "${BATCH_FILES[@]}"; do
+                  git add "$BF" 2>/dev/null || true
+                done
+                if ! git diff --cached --quiet 2>/dev/null; then
+                  git commit -m "[AVASAM] Add batch of $BATCH_COUNT files [skip ci]" --quiet 2>/dev/null || true
+                  local PUSH_RETRY=0
+                  local PUSH_SUCCESS=false
+                  while [ $PUSH_RETRY -lt 5 ]; do
+                    PUSH_RETRY=$((PUSH_RETRY + 1))
+                    if timeout 180 git push origin HEAD:"$BRANCH" 2>&1; then
+                      PUSH_SUCCESS=true
+                      break
+                    else
+                      git fetch origin "$BRANCH" --quiet 2>/dev/null || true
+                      git reset --hard origin/"$BRANCH" 2>/dev/null || true
+                      mkdir -p videos
+                      cp -r "$BACKUP_DIR"/* videos/ 2>/dev/null || true
+                      for BF in "${BATCH_FILES[@]}"; do
+                        git add "$BF" 2>/dev/null || true
+                      done
+                      if ! git diff --cached --quiet 2>/dev/null; then
+                        git commit -m "[AVASAM] Add batch of $BATCH_COUNT files [skip ci]" --quiet 2>/dev/null || true
+                      fi
+                      sleep $((3 + RANDOM % 7))
+                    fi
+                  done
+                  if [ "$PUSH_SUCCESS" = false ]; then
+                    for BF in "${BATCH_FILES[@]}"; do
+                      push_single_file "$BF"
+                    done
+                  fi
+                fi
+                BATCH_FILES=()
+                BATCH_COUNT=0
+                sleep 2
+              fi
+            done
+            if [ ${#BATCH_FILES[@]} -gt 0 ]; then
+              TOTAL_PUSHED=$((TOTAL_PUSHED + ${#BATCH_FILES[@]}))
+              git fetch origin "$BRANCH" --quiet 2>/dev/null || true
+              git reset --hard origin/"$BRANCH" 2>/dev/null || true
+              mkdir -p videos
+              cp -r "$BACKUP_DIR"/* videos/ 2>/dev/null || true
+              for BF in "${BATCH_FILES[@]}"; do
+                git add "$BF" 2>/dev/null || true
+              done
+              if ! git diff --cached --quiet 2>/dev/null; then
+                git commit -m "[AVASAM] Add final batch [skip ci]" --quiet 2>/dev/null || true
+                local PUSH_RETRY=0
+                while [ $PUSH_RETRY -lt 5 ]; do
+                  PUSH_RETRY=$((PUSH_RETRY + 1))
+                  if timeout 180 git push origin HEAD:"$BRANCH" 2>&1; then
+                    break
+                  else
+                    sleep $((3 + RANDOM % 7))
+                    git fetch origin "$BRANCH" --quiet 2>/dev/null || true
+                    git reset --hard origin/"$BRANCH" 2>/dev/null || true
+                    mkdir -p videos
+                    cp -r "$BACKUP_DIR"/* videos/ 2>/dev/null || true
+                    for BF in "${BATCH_FILES[@]}"; do
+                      git add "$BF" 2>/dev/null || true
+                    done
+                    if ! git diff --cached --quiet 2>/dev/null; then
+                      git commit -m "[AVASAM] Add final batch [skip ci]" --quiet 2>/dev/null || true
+                    fi
+                  fi
+                done
+              fi
+            fi
           }
 
           git fetch origin "$BRANCH"
@@ -242,39 +521,74 @@ EOF
           mkdir -p videos
           cp -r "$BACKUP_DIR"/* videos/
 
-          TOTAL_SIZE=$(du -sb videos 2>/dev/null | cut -f1)
-          TOTAL_MB=$((TOTAL_SIZE / 1024 / 1024))
+          ALL_FILES=()
+          while IFS= read -r -d '' FILE; do
+            ALL_FILES+=("$FILE")
+          done < <(find videos -name "README.md" -print0 2>/dev/null)
+          while IFS= read -r -d '' FILE; do
+            ALL_FILES+=("$FILE")
+          done < <(find videos -type f \( -name "*.7z" -o -name "*.7z.[0-9]*" -o -name "*.mp4" -o -name "*.mp3" -o -name "*.m4a" \) -print0 2>/dev/null | sort -z)
 
-          if [ $TOTAL_MB -lt 100 ]; then
+          TOTAL_FILES=${#ALL_FILES[@]}
+          if [ $TOTAL_FILES -eq 0 ]; then
+            echo "No files to push!"
+            exit 0
+          fi
+
+          TOTAL_SIZE=0
+          for F in "${ALL_FILES[@]}"; do
+            if [ -f "$F" ]; then
+              FSIZE=$(stat -c%s "$F" 2>/dev/null || echo 0)
+              TOTAL_SIZE=$((TOTAL_SIZE + FSIZE))
+            fi
+          done
+          TOTAL_SIZE_MB=$((TOTAL_SIZE / 1024 / 1024))
+
+          if [ $TOTAL_SIZE_MB -lt 100 ]; then
             git add -A videos/
-            regenerate_readme
+            regenerate_master_readme
             git add videos/README.md
-            git diff --cached --quiet || git commit -m "[AVASAM] YouTube download [skip ci]"
-            for i in {1..10}; do
-              timeout 300 git push origin HEAD:"$BRANCH" && break
-              sleep $((3 + RANDOM % 7))
-              git fetch origin "$BRANCH"; git reset --hard origin/"$BRANCH"
-              mkdir -p videos; cp -r "$BACKUP_DIR"/* videos/
-              git add -A videos/; regenerate_readme; git add videos/README.md
-              git diff --cached --quiet || git commit -m "[AVASAM] YouTube download [skip ci]"
-            done
-          else
-            for FILE in $(find videos -type f | sort); do
-              git add "$FILE" 2>/dev/null || true
-              git diff --cached --quiet && continue
-              git commit -m "[AVASAM] Add $(basename $FILE) [skip ci]" --quiet
-              for i in {1..5}; do
-                timeout 120 git push origin HEAD:"$BRANCH" && break
-                sleep $((2 + RANDOM % 5))
-                git fetch origin "$BRANCH" --quiet; git reset --hard origin/"$BRANCH"
-                mkdir -p videos; cp -r "$BACKUP_DIR"/* videos/
-                git add "$FILE" 2>/dev/null || true
-                git diff --cached --quiet || git commit -m "[AVASAM] Add $(basename $FILE) [skip ci]" --quiet
+            if ! git diff --cached --quiet; then
+              git commit -m "[AVASAM] YouTube download [skip ci]"
+              PUSH_RETRY=0
+              while [ $PUSH_RETRY -lt 10 ]; do
+                PUSH_RETRY=$((PUSH_RETRY + 1))
+                if timeout 300 git push origin HEAD:"$BRANCH"; then
+                  break
+                else
+                  sleep $((3 + RANDOM % 7))
+                  git fetch origin "$BRANCH"
+                  git reset --hard origin/"$BRANCH"
+                  mkdir -p videos
+                  cp -r "$BACKUP_DIR"/* videos/
+                  git add -A videos/
+                  regenerate_master_readme
+                  git add videos/README.md
+                  if ! git diff --cached --quiet; then
+                    git commit -m "[AVASAM] YouTube download [skip ci]"
+                  fi
+                fi
               done
-            done
-            regenerate_readme
+            fi
+          else
+            push_batch "${ALL_FILES[@]}"
+            git fetch origin "$BRANCH" --quiet 2>/dev/null || true
+            git reset --hard origin/"$BRANCH" 2>/dev/null || true
+            mkdir -p videos
+            cp -r "$BACKUP_DIR"/* videos/ 2>/dev/null || true
+            regenerate_master_readme
             git add videos/README.md
-            git diff --cached --quiet || git commit -m "[AVASAM] Update list [skip ci]"
-            timeout 60 git push origin HEAD:"$BRANCH" || true
+            if ! git diff --cached --quiet 2>/dev/null; then
+              git commit -m "[AVASAM] Update video list [skip ci]" --quiet 2>/dev/null || true
+              PUSH_RETRY=0
+              while [ $PUSH_RETRY -lt 5 ]; do
+                PUSH_RETRY=$((PUSH_RETRY + 1))
+                if timeout 60 git push origin HEAD:"$BRANCH" 2>&1; then
+                  break
+                else
+                  sleep 3
+                fi
+              done
+            fi
           fi
           echo "Done! - avasam.ir"
